@@ -20,13 +20,13 @@ async function garbageCollect() {
   // If no assets are used, all are orphans (unless table is empty)
   // If table is empty, usedHashes is empty.
   
-  let orphanAssetsQuery = db.select().from(assets);
+  let conditions = undefined;
   
   if (usedHashes.length > 0) {
-      orphanAssetsQuery = orphanAssetsQuery.where(notInArray(assets.hash, usedHashes));
+      conditions = notInArray(assets.hash, usedHashes);
   }
   
-  const orphanAssets = await orphanAssetsQuery.all();
+  const orphanAssets = await db.select().from(assets).where(conditions).all();
 
   console.log(`Found ${orphanAssets.length} orphan assets`);
 

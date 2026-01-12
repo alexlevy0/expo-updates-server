@@ -91,6 +91,8 @@ describe.skip('Upload API', () => {
     
     // Verify DB
     const release = await db.select().from(releases).where(sql`id = ${res.body.releaseId}`).get();
+    if (!release) throw new Error('Release not found in DB');
+    
     expect(release).toBeDefined();
     expect(release.platform).toBe('ios');
     expect(release.runtimeVersion).toBe('1.0.0');

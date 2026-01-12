@@ -24,6 +24,7 @@ export interface Release {
   gitCommit: string | null;
   gitBranch: string | null;
   message: string | null;
+  releaseNotes: string | null;
   isActive: boolean; // Drizzle handles boolean mode
   isRollback: boolean;
   rollbackFromId: string | null;
@@ -81,6 +82,7 @@ export const UploadReleaseSchema = z.object({
   gitCommit: z.string().optional(),
   gitBranch: z.string().optional(),
   message: z.string().optional(),
+  releaseNotes: z.string().optional(),
 });
 // Note: 'bundle' file handling is done via multer, verified separately
 

@@ -8,13 +8,12 @@ import path from 'path';
 // Mock the real database module BEFORE importing it
 mock.module('../database', () => {
     // Dynamic import to avoid hoisting issues, effectively returning the test-db exports
-    return import('./test-db');
+    return import('./test-db.js');
 });
 
-// Import db dynamically or just assume mock works for subsequent requires?
-// Bun: "If the module has already been imported, it will be unloaded and re-imported the next time it is imported."
-// So we can await import here.
-const { db } = await import('../database');
+// Import db dynamically
+const dbModule = require('../database');
+const db = dbModule.db;
 
 
 try {

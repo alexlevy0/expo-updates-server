@@ -51,3 +51,5 @@ export function adminAuth(req: Request, res: Response, next: NextFunction) {
   
   return res.status(401).json({ error: 'Authentication required' });
 }
+
+export { adminAuth as dashboardAuth };

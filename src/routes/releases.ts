@@ -1,9 +1,12 @@
 import express from 'express';
 import { db } from '../database';
 import { Release, PaginatedResponse } from '../types';
-import { releases, releaseAssets } from '../db/schema';
+import { releases, releaseAssets, assets } from '../db/schema';
 import { eq, and, desc, sql, count } from 'drizzle-orm';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { config } from '../config';
 import { sendWebhook } from '../services/webhook';
 
 const router = express.Router();

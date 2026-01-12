@@ -1,17 +1,14 @@
 import express from 'express';
-import { sql, eq, desc } from 'drizzle-orm';
+import { sql, eq, desc, and } from 'drizzle-orm';
 import { db } from '../database';
-import { releases, deploymentEvents } from '../db/schema';
-
-const router = express.Router();
-
+import { releases, deploymentEvents, channels, assets } from '../db/schema';
 import { getCertificate, getPrivateKey } from '../crypto';
 import { config } from '../config';
 import fs from 'fs';
 import path from 'path';
 import forge from 'node-forge';
-import { channels, assets, releases, deploymentEvents } from '../db/schema';
-import { sql, eq, and } from 'drizzle-orm';
+
+const router = express.Router();
 
 router.get('/', async (req, res, next) => {
   try {

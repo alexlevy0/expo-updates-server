@@ -45,6 +45,10 @@ export const config = {
       password: getEnv('DASHBOARD_PASSWORD', 'changeme'),
     },
   },
+  retention: {
+    maxInactiveReleaseDays: getIntEnv('RETENTION_MAX_INACTIVE_DAYS', 90),
+    maxReleasesPerChannel: getIntEnv('RETENTION_MAX_PER_CHANNEL', 50),
+  },
   webhooks: {
     onReleaseUrl: process.env.WEBHOOK_ON_RELEASE_URL || null,
     secret: process.env.WEBHOOK_SECRET || null,

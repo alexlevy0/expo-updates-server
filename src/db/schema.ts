@@ -23,6 +23,7 @@ export const releases = sqliteTable('releases', {
   gitCommit: text('git_commit'),
   gitBranch: text('git_branch'),
   message: text('message'),
+  releaseNotes: text('release_notes'),
   isActive: integer('is_active', { mode: 'boolean' }).default(false).notNull(),
   isRollback: integer('is_rollback', { mode: 'boolean' }).default(false).notNull(),
   rollbackFromId: text('rollback_from_id'), // Self-reference handled by relations or raw query if needed
