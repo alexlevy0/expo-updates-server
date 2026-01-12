@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, index, primaryKey } from 'drizzle-orm/sqlite-core';
 import { relations, sql } from 'drizzle-orm';
 
 export const channels = sqliteTable('channels', {
@@ -49,15 +49,13 @@ export const assets = sqliteTable('assets', {
 });
 
 export const releaseAssets = sqliteTable('release_assets', {
-  releaseId: text('release_id').notNull().references(() => releases.id),
+  releaseId: text('release_id').notNull().references(() => releases.id, { onDelete: 'cascade' }),
   assetHash: text('asset_hash').notNull().references(() => assets.hash),
   assetKey: text('asset_key').notNull(),
   isLaunchAsset: integer('is_launch_asset', { mode: 'boolean' }).default(false).notNull(),
 }, (table) => {
   return {
-    pk: index('pk_release_assets').on(table.releaseId, table.assetHash), // Simulating composite PK via unique index logic if needed, or just relying on code. SQLite Drizzle doesn't support composite PKs in valid syntax easily yet in all versions, but we can trust logic or add a unique index.
-    // Actually, let's just make it a composite primary key if Drizzle supports it:
-    // Drizzle supports .primaryKey() on the table builder.
+    pk: primaryKey({ columns: [table.releaseId, table.assetHash] }),
   }
 });
 
@@ -68,7 +66,7 @@ export const releaseAssets = sqliteTable('release_assets', {
 
 export const deploymentEvents = sqliteTable('deployment_events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  releaseId: text('release_id').references(() => releases.id),
+  releaseId: text('release_id').references(() => releases.id, { onDelete: 'cascade' }),
   eventType: text('event_type').notNull(),
   clientIp: text('client_ip'),
   userAgent: text('user_agent'),

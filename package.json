@@ -11,6 +11,8 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun scripts/migrate.ts",
+    "gc": "bun scripts/gc-assets.ts",
+    "backup": "bun scripts/backup.ts",
     "keys:generate": "bun scripts/generate-keys.ts",
     "keys:info": "bun scripts/generate-keys.ts --info",
     "release:create": "bun scripts/create-release.ts",

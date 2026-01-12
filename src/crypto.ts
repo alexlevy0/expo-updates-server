@@ -32,16 +32,14 @@ export function signManifest(manifestString: string): string {
 }
 
 // Node native crypto for faster hashing of assets
+// Node native crypto for faster hashing of assets
 export function hashFile(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
     const stream = fs.createReadStream(filePath);
     stream.on('error', err => reject(err));
     stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('base64').replace(/\//g, '_').replace(/\+/g, '-').replace(/=/g, ''))); // URL safe base64-ish if needed, but Expo usually uses hex for assets or standard base64?
-    // Wait, Expo Assets usually use hex for hash in filename, but let's check the spec.
-    // The user spec says "Hash SHA256", usually hex string.
-    // Let's stick to HEX for asset filenames to avoid FS issues.
+    stream.on('end', () => resolve(hash.digest('hex')));
   });
 }
 
@@ -49,12 +47,6 @@ export function hashString(content: string): string {
    return crypto.createHash('sha256').update(content).digest('hex');
 }
 
-export function hashFileToHex(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', err => reject(err));
-    stream.on('data', chunk => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex'))); 
-  });
+export function hashBuffer(buffer: Buffer): string {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
 }

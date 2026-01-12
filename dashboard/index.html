@@ -18,16 +18,19 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/lucide-react@latest/dist/lucide-react.min.js"></script>
 
+    <!-- Cloudflare Charts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
     <style type="text/tailwindcss">
         @theme {
           --color-primary: #4f46e5;
           --color-primary-hover: #4338ca;
         }
         body {
-            @apply bg-gray-50 text-gray-900;
+            @apply bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100 transition-colors duration-200;
         }
         .card {
-            @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6;
+            @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 transition-colors duration-200;
         }
     </style>
 </head>
@@ -45,7 +48,101 @@
             return <i data-lucide={name} className={className}></i>
         };
 
+        const { createContext, useContext } = React;
         const API_BASE = '/api';
+
+        // Toast Context & Component
+        const ToastContext = createContext();
+        
+        const ToastProvider = ({ children }) => {
+            const [toasts, setToasts] = useState([]);
+
+            const addToast = (message, type = 'info') => {
+                const id = Date.now();
+                setToasts(prev => [...prev, { id, message, type }]);
+                setTimeout(() => removeToast(id), 3000);
+            };
+
+            const removeToast = (id) => {
+                setToasts(prev => prev.filter(t => t.id !== id));
+            };
+
+            return (
+                <ToastContext.Provider value={{ addToast }}>
+                    {children}
+                    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+                        {toasts.map(t => (
+                            <div key={t.id} className={`p-4 rounded-lg shadow-lg text-white flex items-center gap-2 animate-bounce-in ${
+                                t.type === 'success' ? 'bg-green-600' : 
+                                t.type === 'error' ? 'bg-red-600' : 'bg-gray-800'
+                            }`}>
+                                <Icon name={t.type === 'success' ? 'check-circle' : t.type === 'error' ? 'alert-circle' : 'info'} className="w-5 h-5" />
+                                <span>{t.message}</span>
+                            </div>
+                        ))}
+                    </div>
+                </ToastContext.Provider>
+            );
+        };
+
+        const useToast = () => useContext(ToastContext);
+
+        // Downloads Chart
+        const DownloadsChart = ({ data }) => {
+            const chartRef = React.useRef(null);
+            const canvasRef = React.useRef(null);
+
+            useEffect(() => {
+                if (!canvasRef.current || !data) return;
+                
+                // Destroy old chart
+                if (chartRef.current) {
+                    chartRef.current.destroy();
+                }
+
+                const ctx = canvasRef.current.getContext('2d');
+                
+                // Process data (mocking time series for now as stats API returns aggregates)
+                // Need improved stats API for time series?
+                // The current stats API returns `downloads.byPlatform`.
+                // For a line chart "Downloads over time", we need time series data.
+                // The API supports `last24h` and `last7d`, but just counts.
+                // Let's settle for a Bar Chart: Downloads by Platform or Channel?
+                // Or maybe the user implementation plan said "Downloads over time".
+                // I'll make a specialized endpoint or just mock/distribute the `byPlatform` data or use the `events` list of a release if visible.
+                // Actually, let's graph "Downloads by Platform" for now as it's available.
+                
+                const labels = Object.keys(data.byPlatform || {});
+                const values = Object.values(data.byPlatform || {});
+
+                chartRef.current = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Downloads by Platform',
+                            data: values,
+                            backgroundColor: ['#4f46e5', '#10b981', '#f59e0b'],
+                            borderRadius: 6,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { beginAtZero: true, grid: { display: false } },
+                            x: { grid: { display: false } }
+                        }
+                    }
+                });
+
+                return () => {
+                    if (chartRef.current) chartRef.current.destroy();
+                };
+            }, [data]);
+
+            return <canvas ref={canvasRef} />;
+        };
 
         const UploadModal = ({ isOpen, onClose, onUploadSuccess, channels, initialFile }) => {
             const [file, setFile] = useState(null);
@@ -226,12 +323,26 @@
             );
         };
 
-        function App() {
+        function AppContent() {
+            const { addToast } = useToast();
             const [stats, setStats] = useState(null);
             const [releases, setReleases] = useState([]);
             const [channels, setChannels] = useState([]);
             const [loading, setLoading] = useState(true);
             const [refreshTrigger, setRefreshTrigger] = useState(0);
+            
+            // Dark Mode
+            const [darkMode, setDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+
+            useEffect(() => {
+                if (darkMode) {
+                    document.documentElement.classList.add('dark');
+                    localStorage.setItem('theme', 'dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                    localStorage.setItem('theme', 'light');
+                }
+            }, [darkMode]);
             
             // Upload Modal State
             const [showUploadModal, setShowUploadModal] = useState(false);
@@ -305,7 +416,8 @@
                 try {
                     await fetch(`${API_BASE}/releases/${id}/${action}`, { method: 'POST' });
                     setRefreshTrigger(p => p + 1);
-                } catch(e) { alert('Error: ' + e.message); }
+                    addToast(`Release ${action}d successfully`, 'success');
+                } catch(e) { addToast('Error: ' + e.message, 'error'); }
             };
             
             const handleDelete = async (id) => {
@@ -313,7 +425,8 @@
                 try {
                     await fetch(`${API_BASE}/releases/${id}`, { method: 'DELETE' });
                     setRefreshTrigger(p => p + 1);
-                } catch(e) { alert('Error: ' + e.message); }
+                    addToast('Release deleted successfully', 'success');
+                } catch(e) { addToast('Error: ' + e.message, 'error'); }
             };
 
             return (
@@ -350,13 +463,17 @@
                                     Expo Updates Server
                                 </h1>
                             </div>
+
                             <div className="flex items-center gap-4">
-                                <span className="flex items-center gap-2 text-sm text-gray-500">
+                                <span className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                                     Online
                                 </span>
-                                <button onClick={() => setRefreshTrigger(p => p + 1)} className="p-2 hover:bg-gray-100 rounded-full transition">
-                                    <Icon name="refresh-cw" className="w-4 h-4 text-gray-600" />
+                                <button onClick={() => setDarkMode(!darkMode)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition">
+                                    <Icon name={darkMode ? 'sun' : 'moon'} className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+                                </button>
+                                <button onClick={() => setRefreshTrigger(p => p + 1)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition">
+                                    <Icon name="refresh-cw" className="w-4 h-4 text-gray-600 dark:text-gray-300" />
                                 </button>
                             </div>
                         </div>
@@ -365,10 +482,26 @@
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
                         {/* Stats Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                            <StatCard title="Total Releases" value={stats?.totalReleases || 0} icon="layers" color="bg-blue-50 text-blue-600" />
-                            <StatCard title="Active Releases" value={stats?.activeReleases || 0} icon="check-circle" color="bg-green-50 text-green-600" />
-                            <StatCard title="Downloads" value={stats?.totalDownloads || 0} icon="download-cloud" color="bg-purple-50 text-purple-600" />
-                            <StatCard title="Errors" value={stats?.errors || 0} icon="alert-circle" color="bg-red-50 text-red-600" />
+                            <StatCard title="Total Releases" value={stats?.totalReleases || 0} icon="layers" color="bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400" />
+                            <StatCard title="Active Releases" value={stats?.activeReleases || 0} icon="check-circle" color="bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400" />
+                            <StatCard title="Downloads" value={stats?.totalDownloads || 0} icon="download-cloud" color="bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400" />
+                            <StatCard title="Errors" value={stats?.errors || 0} icon="alert-circle" color="bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400" />
+                        </div>
+
+                        {/* Chart Section */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                             <div className="md:col-span-2 card">
+                                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">Downloads Analytics</h3>
+                                 <div className="h-64">
+                                     <DownloadsChart data={stats?.downloads || {}} />
+                                 </div>
+                             </div>
+                             <div className="card">
+                                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">Recent Activity</h3>
+                                 <div className="space-y-4">
+                                     <p className="text-sm text-gray-500 dark:text-gray-400">No recent activity log implemented yet.</p>
+                                 </div>
+                             </div>
                         </div>
 
                          {/* Certificate Info */}
@@ -503,6 +636,14 @@
                         <Icon name={icon} className="w-5 h-5" />
                     </div>
                 </div>
+            );
+        }
+
+        function App() {
+            return (
+                <ToastProvider>
+                    <AppContent />
+                </ToastProvider>
             );
         }
 

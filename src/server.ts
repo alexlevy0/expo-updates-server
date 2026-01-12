@@ -3,10 +3,9 @@ import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
 import { config } from './config';
-import { apiLimiter } from './middleware/rate-limit';
+import { apiLimiter, manifestLimiter, uploadLimiter } from './middleware/rate-limit';
 import { errorHandler } from './middleware/error-handler';
-
-// Route imports
+import { dashboardAuth } from './middleware/auth';
 import expoRoutes from './routes/expo';
 import releaseRoutes from './routes/releases';
 import channelRoutes from './routes/channels';
@@ -17,7 +16,7 @@ const app = express();
 
 // Security Headers
 app.use(helmet({
-  contentSecurityPolicy: false, // Strict CSP might block some dashboard resources (inline scripts) if not careful. default off for now.
+  contentSecurityPolicy: false, 
 }));
 
 // CORS
@@ -35,26 +34,44 @@ if (config.server.trustProxy) {
 }
 
 // Routes
-app.use('/', expoRoutes); // Root level likely for /assets, or /api/manifest which expoRoutes handles
-app.use('/api/releases', releaseRoutes);
-app.use('/api/channels', channelRoutes);
-app.use('/api/stats', statsRoutes);
+app.use('/api/manifest', manifestLimiter); // Apply specific limiter for manifest if handled by expoRoutes with dedicated path, better to mount specific route if possible, but expoRoutes handles it.
+// Actually expoRoutes handles /api/manifest inside. So we should probably apply to the route mount.
+// But expoRoutes is mounted at root `/`. "app.use('/', expoRoutes)"
+// To apply limiter specifically to manifest, we can't easily unless we know the path inside expoRoutes.
+// Typically it is `GET /api/manifest`.
 
-// Upload routes often need custom body parsing (multipart), so handled inside or attached carefully.
-// We'll attach it at proper path.
-app.use('/api/releases', uploadRoutes); // e.g. POST /api/releases/upload
+// Let's modify how we mount routes to be more explicit or apply middleware globally with path filter
+app.use('/api/manifest', manifestLimiter);
 
-// Dashboard Static Files
-// If 'dist/dashboard' exists (production), serve it. In dev, we might serve from 'dashboard' dir directly or let user run standard.
-// But specs say: "Single HTML file (zero build step)" for dashboard.
-// So we serve the static dashboard directory.
+app.use('/', expoRoutes); 
+app.use('/api/releases', dashboardAuth, releaseRoutes);
+app.use('/api/channels', dashboardAuth, channelRoutes);
+app.use('/api/stats', statsRoutes); // Stats might be public or protected? Usually public or separate auth. Let's keep public or add auth if desired. Request didn't specify stats auth, but typically dashboard uses it.
+// Actually implementation request said "dashboardAuth on routes admin".
+// Stats is used by dashboard, so maybe auth? But user didn't explicitly say stats.
+// "dashboard/index.html" fetches /api/stats. So if dashboard is authed, stats should be too if called from browser with credentials.
+// But Basic Auth header isn't automatically sent by fetch unless configured...
+// Wait, if we put Basic Auth on dashboard HTML, browser handles it.
+// Fetches from that page will inherit credentials? No, fetch needs `credentials: 'include'`?
+// Actually Basic Auth is usually per-request. Browser remembers it for the realm.
+// Let's assume stats can be protected too if dashboard uses it.
+// Checking user request: "Appliquer sur les routes admin : app.use('/api/releases', ...), app.use('/api/channels', ...), app.use('/dashboard', ...)"
+// It didn't mention stats. But I'll leave stats open or assume it's fine.
+
+// Upload
+app.use('/api/releases', dashboardAuth); // Auth for upload too since it's under releases path structure (actually releases.ts handles /api/releases/*, upload handles /api/releases/upload specifically via separate router mount?)
+// In server.ts original:
+// app.use('/api/releases', releaseRoutes);
+// app.use('/api/releases', uploadRoutes);
+
+// So we can do:
+app.use('/api/releases/upload', uploadLimiter);
+app.use('/api/releases', dashboardAuth, uploadRoutes); // Secure upload
+app.use('/api/releases', dashboardAuth, releaseRoutes); // Secure releases
+
+// Dashboard Static
 const dashboardDir = path.join(__dirname, '../dashboard'); 
-// In prod, structure is:
-// /app/dist/server.js
-// /app/dashboard/index.html
-// So relative to dist/server.js, dashboard is ../dashboard (peer)
-// In dev: src/server.ts, dashboard is ../dashboard
-app.use('/dashboard', express.static(dashboardDir));
+app.use('/dashboard', dashboardAuth, express.static(dashboardDir));
 
 // Fallback for SPA routing if we add client-side routing, but it's single index.html
 app.get('/dashboard/*', (req, res) => {

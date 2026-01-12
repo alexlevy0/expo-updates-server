@@ -10,6 +10,7 @@ import { UploadReleaseSchema } from '../types';
 import { hashFile } from '../crypto';
 import { releases, assets, releaseAssets } from '../db/schema';
 import { sql, eq, and } from 'drizzle-orm';
+import { sendWebhook } from '../services/webhook';
 
 const router = express.Router();
 const upload = multer({ dest: path.join(config.paths.dataDir, 'tmp_uploads') });
@@ -21,25 +22,33 @@ function moveFile(src: string, dest: string) {
 }
 
 // POST /api/releases/upload
+// POST /api/releases/upload
 router.post('/upload', upload.single('bundle'), async (req, res, next) => {
     let zipPath: string | null = null;
     let tmpDir: string | null = null;
 
     try {
-        const body = UploadReleaseSchema.parse(req.body);
-        
         if (!req.file) {
             res.status(400).json({ error: 'Missing bundle file (ZIP)' });
             return;
         }
 
         zipPath = req.file.path;
-        const zip = new AdmZip(zipPath);
         
-        // Create tmp extraction dir
-        tmpDir = path.join(config.paths.dataDir, 'tmp_extract_' + crypto.randomUUID());
+        // Use a more robust temp dir path
+        tmpDir = path.join(config.paths.dataDir, 'tmp', `extract_${crypto.randomUUID()}`);
+        
+        // Ensure parent tmp dir exists
+        const tmpParent = path.dirname(tmpDir);
+        if (!fs.existsSync(tmpParent)) {
+            fs.mkdirSync(tmpParent, { recursive: true });
+        }
+        
+        const zip = new AdmZip(zipPath);
         fs.mkdirSync(tmpDir, { recursive: true });
         zip.extractAllTo(tmpDir, true);
+
+        const body = UploadReleaseSchema.parse(req.body);
 
         // Analyze export structure
         const metadataPath = path.join(tmpDir, 'metadata.json');
@@ -55,6 +64,10 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
 
         // 1. Process Assets
         const assetsBaseDir = path.join(config.paths.dataDir, 'assets');
+        if (!fs.existsSync(assetsBaseDir)) {
+             fs.mkdirSync(assetsBaseDir, { recursive: true });
+        }
+
         const assetMappings: { hash: string, key: string, isLaunch: boolean }[] = [];
 
         // Launch Asset (Bundle)
@@ -64,6 +77,7 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
         const bundleDest = path.join(assetsBaseDir, bundleHash);
         if (!fs.existsSync(bundleDest)) {
              moveFile(bundlePathInZip, bundleDest);
+             // Ensure DB record exists
              try {
                 db.insert(assets).values({
                     hash: bundleHash,
@@ -72,7 +86,9 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
                     fileExtension: '.js',
                     sizeBytes: fs.statSync(bundleDest).size
                 }).onConflictDoNothing().run();
-             } catch(e) {}
+             } catch(e) {
+                 console.warn(`Failed to insert bundle asset record ${bundleHash}:`, e);
+             }
         }
         assetMappings.push({ hash: bundleHash, key: 'bundle', isLaunch: true });
 
@@ -88,6 +104,7 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
                     // Minimal extension detection
                      let ext = '.bin';
                      let mime = 'application/octet-stream';
+                     // You could use mime-types package here if desired
                      
                      try {
                         db.insert(assets).values({
@@ -97,7 +114,9 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
                             fileExtension: ext,
                             sizeBytes: fs.statSync(assetDest).size
                         }).onConflictDoNothing().run();
-                     } catch(e) {}
+                     } catch(e) {
+                         console.warn(`Failed to insert asset record ${assetHash}:`, e);
+                     }
                  }
                  assetMappings.push({ hash: assetHash, key: path.basename(assetRelPath), isLaunch: false });
             }
@@ -105,7 +124,7 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
 
         // 2. Create Release
         const releaseId = crypto.randomUUID();
-        let manifestJson = '{}'; // Simplified for this implementation
+        let manifestJson = '{}'; 
         
         // Transaction to insert everything
         db.transaction(async (tx) => {
@@ -147,13 +166,35 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
                .run();
         });
 
+        // Trigger Webhook
+        await sendWebhook({
+            event: 'release.created',
+            release: { 
+                id: releaseId, 
+                platform: body.platform, 
+                channel: body.channel, 
+                runtimeVersion: body.runtimeVersion,
+                message: body.message 
+            },
+            timestamp: new Date().toISOString(),
+        });
+
         res.status(201).json({ success: true, releaseId });
 
     } catch (error) {
+        // Log the full error
+        console.error('Upload failed:', error);
+        
+        // Pass to global error handler
         next(error);
     } finally {
-        if (zipPath && fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-        if (tmpDir && fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+        // Cleanup Temp Files
+        try {
+            if (zipPath && fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+            if (tmpDir && fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch(e) {
+            console.error('Failed to cleanup temp files', e);
+        }
     }
 });
 

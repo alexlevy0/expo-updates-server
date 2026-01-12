@@ -44,6 +44,10 @@ export const config = {
       password: getEnv('DASHBOARD_PASSWORD', 'changeme'),
     },
   },
+  webhooks: {
+    onReleaseUrl: process.env.WEBHOOK_ON_RELEASE_URL || null,
+    secret: process.env.WEBHOOK_SECRET || null,
+  },
   logLevel: getEnv('LOG_LEVEL', 'info'),
 };
 
