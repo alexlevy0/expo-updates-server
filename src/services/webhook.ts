@@ -9,6 +9,7 @@ interface WebhookPayload {
     channel: string;
     runtimeVersion: string;
     message?: string;
+    rollbackFromId?: string;
   };
   timestamp: string;
 }

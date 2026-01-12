@@ -14,9 +14,11 @@
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Lucide Icons -->
+    <!-- Lucide Icons (Vanilla only, no React version to avoid conflicts) -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://unpkg.com/lucide-react@latest/dist/lucide-react.min.js"></script>
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:,">
 
     <!-- Cloudflare Charts -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -38,14 +40,51 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
         const { createRoot } = ReactDOM;
         
+        // Safer Icon component that avoids React/DOM conflicts
         const Icon = ({ name, className }) => {
+            const ref = useRef(null);
+            
             useEffect(() => {
-                if (window.lucide) window.lucide.createIcons();
-            });
-            return <i data-lucide={name} className={className}></i>
+                if (!ref.current || !window.lucide) return;
+                
+                // Convert kebab-case to PascalCase for lucide.icons lookup
+                const iconName = name.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('');
+                const iconDef = window.lucide.icons ? window.lucide.icons[iconName] : null;
+
+                if (iconDef) {
+                    // Create SVG element using lucide's createElement utility if available, or manual handling
+                    // vanilla lucide 0.x: createElement(iconNode)
+                    // We assume window.lucide has createElement or we can use the object def directly if we knew the format.
+                    // safely clean
+                    while (ref.current.firstChild) {
+                        ref.current.removeChild(ref.current.firstChild);
+                    }
+                    
+                    try {
+                        const svg = window.lucide.createElement(iconDef);
+                        
+                        // Apply className manually since createElement might not take it easily in all versions 
+                        // or we pass it as attrs.
+                        if (className) {
+                            svg.setAttribute('class', className);
+                            // Also ensure these classes are preserved if lucide overwrites? 
+                            // Usually lucide adds 'lucide lucide-name'.
+                            // We construct class string.
+                            const baseClass = `lucide lucide-${name}`;
+                            svg.setAttribute('class', `${baseClass} ${className}`);
+                        }
+                        
+                        ref.current.appendChild(svg);
+                    } catch (e) {
+                        console.error('Failed to create icon:', name, e);
+                    }
+                }
+            }, [name, className]);
+
+            return <span ref={ref} style={{ display: 'inline-flex' }}></span>;
         };
 
         const { createContext, useContext } = React;
@@ -323,12 +362,22 @@
             );
         };
 
-        function AppContent() {
+        function App() {
             const { addToast } = useToast();
             const [stats, setStats] = useState(null);
+            
+            // Releases Data & Controls
             const [releases, setReleases] = useState([]);
+            const [totalReleases, setTotalReleases] = useState(0);
+            const [page, setPage] = useState(1);
+            const [limit] = useState(10);
+            const [filters, setFilters] = useState({ platform: '', channel: '' });
+            
             const [channels, setChannels] = useState([]);
+            const [activity, setActivity] = useState([]);
+            
             const [loading, setLoading] = useState(true);
+            const [activityLoading, setActivityLoading] = useState(true);
             const [refreshTrigger, setRefreshTrigger] = useState(0);
             
             // Dark Mode
@@ -349,27 +398,66 @@
             const [droppedFile, setDroppedFile] = useState(null);
             const [isGlobalDragging, setIsGlobalDragging] = useState(false);
 
-            // Fetch Data
+            // Fetch Main Data
             useEffect(() => {
                 const fetchData = async () => {
                    setLoading(true);
                    try {
+                       const query = new URLSearchParams({
+                           limit: limit,
+                           offset: (page - 1) * limit,
+                           ...filters
+                       });
+
                        const [statsRes, releasesRes, channelsRes] = await Promise.all([
                            fetch(`${API_BASE}/stats`).then(r => r.json()),
-                           fetch(`${API_BASE}/releases?limit=20`).then(r => r.json()),
+                           fetch(`${API_BASE}/releases?${query}`).then(r => r.json()),
                            fetch(`${API_BASE}/channels`).then(r => r.json())
                        ]);
-                       setStats(statsRes);
+                       
+                       setStats({
+                           totalReleases: statsRes.releases?.total || 0,
+                           activeReleases: statsRes.releases?.active || 0,
+                           totalDownloads: statsRes.downloads?.total || 0,
+                           errors: statsRes.errors?.last24h || 0,
+                           downloads: statsRes.downloads || {},
+                           certificate: statsRes.certificate || null,
+                           storage: statsRes.storage || {},
+                       });
+
                        setReleases(releasesRes.data || []);
+                       setTotalReleases(releasesRes.meta?.total || 0);
                        setChannels(channelsRes || []);
                    } catch (e) {
                        console.error(e);
+                       addToast('Failed to fetch data', 'error');
                    } finally {
                        setLoading(false);
                        setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 100);
                    }
                 };
                 fetchData();
+            }, [refreshTrigger, page, filters]); // Re-fetch on params change
+
+            // Fetch Activity Separate (refresh less often or same?)
+            useEffect(() => {
+                const fetchActivity = async () => {
+                    setActivityLoading(true);
+                    try {
+                        const res = await fetch(`${API_BASE}/stats/activity?limit=10`).then(r => r.json());
+                        if (Array.isArray(res)) {
+                            setActivity(res);
+                        } else {
+                            console.warn('Activity response is not an array:', res);
+                            setActivity([]);
+                        }
+                    } catch(e) { 
+                        console.error(e); 
+                        setActivity([]);
+                    }
+                    finally { setActivityLoading(false); }
+                };
+                fetchActivity();
             }, [refreshTrigger]);
 
             // Periodic Refresh (30s)
@@ -382,16 +470,9 @@
 
             // Window Drag & Drop Handlers
             useEffect(() => {
-                const handleDragOver = (e) => {
-                    e.preventDefault();
-                    setIsGlobalDragging(true);
-                };
-                const handleDragLeave = (e) => {
-                    // Only if leaving the window (clientY=0 or similar checks can be complex, keeping simple)
-                    if (e.clientX === 0 || e.clientY === 0) {
-                        setIsGlobalDragging(false);
-                    }
-                };
+                // ... same handlers ...
+                const handleDragOver = (e) => { e.preventDefault(); setIsGlobalDragging(true); };
+                const handleDragLeave = (e) => { if (e.clientX === 0 || e.clientY === 0) setIsGlobalDragging(false); };
                 const handleDrop = (e) => {
                     e.preventDefault();
                     setIsGlobalDragging(false);
@@ -400,7 +481,6 @@
                         setShowUploadModal(true);
                     }
                 };
-
                 window.addEventListener('dragover', handleDragOver);
                 window.addEventListener('dragleave', handleDragLeave);
                 window.addEventListener('drop', handleDrop);
@@ -409,6 +489,17 @@
                     window.removeEventListener('dragleave', handleDragLeave);
                     window.removeEventListener('drop', handleDrop);
                 };
+            }, []);
+            
+            // Shortcuts
+            useEffect(() => {
+                const handleKey = (e) => {
+                    if (e.key === 'r' && !e.ctrlKey && !e.metaKey) setRefreshTrigger(p => p + 1);
+                    if (e.key === 'n' && !e.ctrlKey && !e.metaKey) setShowUploadModal(true);
+                    if (e.key === 'Escape') setShowUploadModal(false);
+                };
+                window.addEventListener('keydown', handleKey);
+                return () => window.removeEventListener('keydown', handleKey);
             }, []);
 
             const handleAction = async (id, action) => {
@@ -421,13 +512,16 @@
             };
             
             const handleDelete = async (id) => {
-                if (!confirm('Delete this release? This cannot be undone.')) return;
+                // ... same ...
+                if (!confirm('Delete this release?')) return;
                 try {
                     await fetch(`${API_BASE}/releases/${id}`, { method: 'DELETE' });
                     setRefreshTrigger(p => p + 1);
-                    addToast('Release deleted successfully', 'success');
+                    addToast('Deleted', 'success');
                 } catch(e) { addToast('Error: ' + e.message, 'error'); }
             };
+
+            const totalPages = Math.ceil(totalReleases / limit);
 
             return (
                 <div className="min-h-screen pb-20 relative">
@@ -445,17 +539,11 @@
                         isOpen={showUploadModal} 
                         initialFile={droppedFile}
                         channels={channels}
-                        onClose={() => {
-                            setShowUploadModal(false);
-                            setDroppedFile(null);
-                        }}
-                        onUploadSuccess={() => {
-                            setRefreshTrigger(p => p + 1);
-                            // Maybe show toast success?
-                        }}
+                        onClose={() => { setShowUploadModal(false); setDroppedFile(null); }}
+                        onUploadSuccess={() => { setRefreshTrigger(p => p + 1); addToast('Upload successful', 'success'); }}
                     />
 
-                    <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+                    <header className="bg-white border-b border-gray-200 sticky top-0 z-10 dark:bg-slate-900 dark:border-slate-800">
                         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
                             <div className="flex items-center gap-3">
                                 <Icon name="rocket" className="w-6 h-6 text-indigo-600" />
@@ -469,10 +557,10 @@
                                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                                     Online
                                 </span>
-                                <button onClick={() => setDarkMode(!darkMode)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition">
+                                <button onClick={() => setDarkMode(!darkMode)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition">
                                     <Icon name={darkMode ? 'sun' : 'moon'} className="w-4 h-4 text-gray-600 dark:text-gray-300" />
                                 </button>
-                                <button onClick={() => setRefreshTrigger(p => p + 1)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition">
+                                <button onClick={() => setRefreshTrigger(p => p + 1)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition" title="Refresh (R)">
                                     <Icon name="refresh-cw" className="w-4 h-4 text-gray-600 dark:text-gray-300" />
                                 </button>
                             </div>
@@ -488,7 +576,7 @@
                             <StatCard title="Errors" value={stats?.errors || 0} icon="alert-circle" color="bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400" />
                         </div>
 
-                        {/* Chart Section */}
+                        {/* Chart & Activity */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                              <div className="md:col-span-2 card">
                                  <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">Downloads Analytics</h3>
@@ -496,16 +584,192 @@
                                      <DownloadsChart data={stats?.downloads || {}} />
                                  </div>
                              </div>
-                             <div className="card">
-                                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4">Recent Activity</h3>
-                                 <div className="space-y-4">
-                                     <p className="text-sm text-gray-500 dark:text-gray-400">No recent activity log implemented yet.</p>
+                             <div className="card h-96 flex flex-col">
+                                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center justify-between">
+                                    Recent Activity
+                                    {activityLoading && <Icon name="loader" className="w-4 h-4 animate-spin text-gray-400" />}
+                                 </h3>
+                                 <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                                     {activity.length === 0 ? (
+                                         <p className="text-sm text-gray-500 italic">No activity recorded.</p>
+                                     ) : activity.map(evt => (
+                                         <div key={evt.id} className="flex gap-3 text-sm border-b border-gray-100 dark:border-gray-700 pb-3 last:border-0">
+                                             <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
+                                                 evt.eventType === 'update_error' ? 'bg-red-500' : 
+                                                 evt.eventType === 'manifest_request' ? 'bg-green-500' : 'bg-blue-500'
+                                             }`} />
+                                             <div>
+                                                 <p className="font-medium text-gray-800 dark:text-gray-200">
+                                                     {evt.eventType === 'manifest_request' ? 'Update Check' : 
+                                                      evt.eventType === 'update_error' ? 'Client Error' : evt.eventType}
+                                                 </p>
+                                                 <p className="text-xs text-gray-500 dark:text-gray-400">
+                                                     {evt.expoPlatform} • {evt.expoRuntimeVersion}
+                                                 </p>
+                                                 <p className="text-xs text-gray-400 mt-1">
+                                                     {new Date(evt.createdAt).toLocaleTimeString()}
+                                                 </p>
+                                             </div>
+                                         </div>
+                                     ))}
                                  </div>
                              </div>
                         </div>
 
+                        {/* Releases Section */}
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-center flex-wrap gap-4">
+                                <h2 className="text-lg font-bold text-gray-800 dark:text-white">Releases</h2>
+                                
+                                <div className="flex items-center gap-4 flex-wrap">
+                                    {/* Filters */}
+                                    <div className="flex items-center gap-2">
+                                        <select 
+                                            value={filters.platform} 
+                                            onChange={e => { setFilters({...filters, platform: e.target.value}); setPage(1); }}
+                                            className="px-3 py-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">All Platforms</option>
+                                            <option value="ios">iOS</option>
+                                            <option value="android">Android</option>
+                                        </select>
+                                        
+                                        <select 
+                                            value={filters.channel} 
+                                            onChange={e => { setFilters({...filters, channel: e.target.value}); setPage(1); }}
+                                            className="px-3 py-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">All Channels</option>
+                                            {channels.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <button 
+                                        onClick={() => setShowUploadModal(true)} 
+                                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm font-medium"
+                                    >
+                                        <Icon name="plus" className="w-4 h-4" />
+                                        Upload Release
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Releases Table */}
+                            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
+                                {loading ? (
+                                    <div className="p-8 space-y-4 animate-pulse">
+                                        {[1,2,3].map(i => (
+                                            <div key={i} className="h-12 bg-gray-100 dark:bg-slate-700 rounded w-full"></div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead className="bg-gray-50 dark:bg-slate-900 border-b border-gray-100 dark:border-slate-700">
+                                                <tr>
+                                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Platform</th>
+                                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Runtime</th>
+                                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Channel</th>
+                                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
+                                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-50 dark:divide-slate-700">
+                                                {releases.length === 0 ? (
+                                                    <tr>
+                                                        <td colSpan="6" className="p-8 text-center text-gray-400">
+                                                            No releases found matching filters.
+                                                        </td>
+                                                    </tr>
+                                                ) : releases.map(r => (
+                                                    <tr key={r.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-700/50 transition duration-150">
+                                                        <td className="p-4">
+                                                            {r.isActive ? 
+                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800">Active</span> :
+                                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200 dark:bg-slate-700 dark:text-gray-400 dark:border-slate-600">Inactive</span>
+                                                            }
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border ${
+                                                                r.platform === 'ios' ? 'bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-300' : 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400'
+                                                            }`}>
+                                                                {r.platform === 'ios' ? 'iOS' : 'Android'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4 font-mono text-sm dark:text-gray-300">{r.runtimeVersion}</td>
+                                                        <td className="p-4">
+                                                            <span className="inline-flex items-center px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400">
+                                                                {r.channel}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-4 text-sm text-gray-500 dark:text-gray-400">
+                                                            {new Date(r.createdAt).toLocaleString()}
+                                                            <div className="text-xs text-gray-400 dark:text-gray-600 mt-0.5 font-mono">{r.id.substring(0,8)}...</div>
+                                                        </td>
+                                                        <td className="p-4 text-right">
+                                                            <div className="flex justify-end gap-2">
+                                                                {!r.isActive && (
+                                                                    <button onClick={() => handleAction(r.id, 'activate')} className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 rounded transition" title="Activate">
+                                                                        <Icon name="play" className="w-4 h-4" />
+                                                                    </button>
+                                                                )}
+                                                                <button onClick={() => handleAction(r.id, 'rollback')} className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/30 rounded transition" title="Rollback To This">
+                                                                    <Icon name="rotate-ccw" className="w-4 h-4" />
+                                                                </button>
+                                                                <button onClick={() => handleDelete(r.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition" title="Delete">
+                                                                    <Icon name="trash-2" className="w-4 h-4" />
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                                
+                                {/* Pagination Controls */}
+                                <div className="bg-gray-50 dark:bg-slate-900 px-4 py-3 border-t border-gray-200 dark:border-slate-800 flex items-center justify-between sm:px-6">
+                                    <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                                        <div>
+                                            <p className="text-sm text-gray-700 dark:text-gray-400">
+                                                Showing <span className="font-medium">{(page - 1) * limit + 1}</span> to <span className="font-medium">{Math.min(page * limit, totalReleases)}</span> of <span className="font-medium">{totalReleases}</span> results
+                                            </p>
+                                        </div>
+                                        <div>
+                                            <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                                                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm font-medium text-gray-500 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50">
+                                                    <span className="sr-only">Previous</span>
+                                                    <Icon name="chevron-left" className="w-4 h-4" />
+                                                </button>
+                                                {[...Array(totalPages)].map((_, i) => (
+                                                    <button 
+                                                        key={i} 
+                                                        onClick={() => setPage(i + 1)}
+                                                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                                                            page === i + 1 
+                                                            ? 'z-10 bg-indigo-50 border-indigo-500 text-indigo-600 dark:bg-indigo-900/30 dark:border-indigo-500 dark:text-indigo-400' 
+                                                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50 dark:bg-slate-800 dark:border-slate-600 dark:text-gray-400 dark:hover:bg-slate-700'
+                                                        }`}
+                                                    >
+                                                        {i + 1}
+                                                    </button>
+                                                ))}
+                                                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm font-medium text-gray-500 hover:bg-gray-50 dark:hover:bg-slate-700 disabled:opacity-50">
+                                                    <span className="sr-only">Next</span>
+                                                    <Icon name="chevron-right" className="w-4 h-4" />
+                                                </button>
+                                            </nav>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                          {/* Certificate Info */}
                         <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
+                             {/* ... same content ... */}
                              <div className="absolute top-0 right-0 p-4 opacity-10">
                                 <Icon name="shield" className="w-32 h-32" />
                              </div>
@@ -515,98 +779,21 @@
                                      Certificate Status
                                 </h3>
                                 <div className="space-y-1 text-sm text-gray-300">
-                                    <p>Issuer: Self-Hosted Expo Updates Root</p>
-                                    <p>Expires: <span className="text-green-400">2036-01-01</span> (Valid)</p>
+                                    <p>Subject: {stats?.certificate?.subject || 'N/A'}</p>
+                                    <p>Issuer: {stats?.certificate?.issuer || 'Self-Signed'}</p>
+                                    <p>Expires: <span className={stats?.certificate?.daysRemaining > 30 ? 'text-green-400' : 'text-red-400'}>
+                                        {stats?.certificate?.validTo ? new Date(stats.certificate.validTo).toLocaleDateString() : 'N/A'}
+                                    </span> ({stats?.certificate?.daysRemaining || 0} days remaining)</p>
+                                    <p className="font-mono text-xs opacity-70">Fingerprint: {stats?.certificate?.fingerprint?.substring(0, 23)}...</p>
                                 </div>
                              </div>
                         </div>
 
-                        {/* Actions Bar */}
-                        <div className="flex justify-between items-center">
-                            <h2 className="text-lg font-bold text-gray-800">Releases</h2>
-                            <div className="flex gap-2">
-                                <button 
-                                    onClick={() => setShowUploadModal(true)} 
-                                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition shadow-sm font-medium"
-                                >
-                                    <Icon name="plus" className="w-4 h-4" />
-                                    Upload Release
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Releases Table */}
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                    <thead className="bg-gray-50 border-b border-gray-100">
-                                        <tr>
-                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Platform</th>
-                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Runtime</th>
-                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Channel</th>
-                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Created</th>
-                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-50">
-                                        {releases.length === 0 ? (
-                                            <tr>
-                                                <td colSpan="6" className="p-8 text-center text-gray-400">
-                                                    No releases found. Upload one via CLI.
-                                                </td>
-                                            </tr>
-                                        ) : releases.map(r => (
-                                            <tr key={r.id} className="hover:bg-gray-50/50 transition duration-150">
-                                                <td className="p-4">
-                                                    {r.isActive ? 
-                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 border border-green-200">Active</span> :
-                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">Inactive</span>
-                                                    }
-                                                </td>
-                                                <td className="p-4">
-                                                    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border ${
-                                                        r.platform === 'ios' ? 'bg-slate-100 border-slate-200 text-slate-700' : 'bg-green-50 border-green-200 text-green-700'
-                                                    }`}>
-                                                        {r.platform === 'ios' ? 'iOS' : 'Android'}
-                                                    </span>
-                                                </td>
-                                                <td className="p-4 font-mono text-sm">{r.runtimeVersion}</td>
-                                                <td className="p-4">
-                                                    <span className="inline-flex items-center px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100">
-                                                        {r.channel}
-                                                    </span>
-                                                </td>
-                                                <td className="p-4 text-sm text-gray-500">
-                                                    {new Date(r.createdAt).toLocaleString()}
-                                                    <div className="text-xs text-gray-400 mt-0.5 font-mono">{r.id.substring(0,8)}...</div>
-                                                </td>
-                                                <td className="p-4 text-right">
-                                                    <div className="flex justify-end gap-2">
-                                                        {!r.isActive && (
-                                                            <button onClick={() => handleAction(r.id, 'activate')} className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition" title="Activate">
-                                                                <Icon name="play" className="w-4 h-4" />
-                                                            </button>
-                                                        )}
-                                                        <button onClick={() => handleAction(r.id, 'rollback')} className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded transition" title="Rollback To This">
-                                                            <Icon name="rotate-ccw" className="w-4 h-4" />
-                                                        </button>
-                                                        <button onClick={() => handleDelete(r.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition" title="Delete">
-                                                            <Icon name="trash-2" className="w-4 h-4" />
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                         {/* Docs / Config Snippet */}
-                         <div className="bg-slate-900 rounded-xl p-6 text-slate-300 font-mono text-sm overflow-x-auto">
-                            <h3 className="text-slate-100 font-bold mb-2">Configuration (app.json)</h3>
-                            <pre>{`{
+                        {/* Docs */}
+                        <div className="bg-slate-900 rounded-xl p-6 text-slate-300 font-mono text-sm overflow-x-auto">
+                           {/* ... same ... */}
+                           <h3 className="text-slate-100 font-bold mb-2">Configuration (app.json)</h3>
+                           <pre>{`{
   "expo": {
     "updates": {
       "url": "${window.location.origin}/api/manifest",
@@ -619,7 +806,7 @@
     }
   }
 }`}</pre>
-                         </div>
+                        </div>
                     </main>
                 </div>
             );
@@ -639,16 +826,16 @@
             );
         }
 
-        function App() {
+        function AppWrapper() {
             return (
                 <ToastProvider>
-                    <AppContent />
+                    <App />
                 </ToastProvider>
             );
         }
 
         const root = createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<AppWrapper />);
     </script>
 </body>
 </html>

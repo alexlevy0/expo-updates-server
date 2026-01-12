@@ -13,12 +13,14 @@
     "db:migrate": "bun scripts/migrate.ts",
     "gc": "bun scripts/gc-assets.ts",
     "backup": "bun scripts/backup.ts",
+    "purge": "bun scripts/purge-old-releases.ts",
+    "export-data": "bun scripts/export-releases.ts",
     "keys:generate": "bun scripts/generate-keys.ts",
     "keys:info": "bun scripts/generate-keys.ts --info",
     "release:create": "bun scripts/create-release.ts",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest",
+    "test": "bun test",
     "clean": "rm -rf dist/ data/ keys/"
   },
   "keywords": [

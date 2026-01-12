@@ -44,6 +44,11 @@ beforeEach(async () => {
     }
     
     // Seed essential data
+    db.insert(schema.runtimeVersions).values([
+         { version: '1.0.0' },
+         { version: '1.0' }
+    ]).run();
+
     db.insert(schema.channels).values([
          { name: 'production', description: 'Production' },
          { name: 'staging', description: 'Staging' }

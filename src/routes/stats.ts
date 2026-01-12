@@ -193,4 +193,88 @@ router.get('/releases/:id', (req, res, next) => {
     }
 });
 
+// ... existing code ...
+
+router.get('/activity', (req, res, next) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit as string || '50'), 100);
+        const events = db.select().from(deploymentEvents)
+            .orderBy(desc(deploymentEvents.createdAt))
+            .limit(limit)
+            .all();
+        res.json(events);
+    } catch (e) {
+        next(e);
+    }
+});
+
+router.get('/metrics', async (req, res, next) => {
+    try {
+        // Prometheus Format
+        const totalReleases = db.select({ count: sql<number>`count(*)` }).from(releases).get()?.count || 0;
+        const activeReleases = db.select({ count: sql<number>`count(*)` }).from(releases).where(eq(releases.isActive, true)).get()?.count || 0;
+        
+        const downloadsTotal = db.select({ count: sql<number>`count(*)` }).from(deploymentEvents).where(eq(deploymentEvents.eventType, 'manifest_request')).get()?.count || 0;
+        const errorsTotal = db.select({ count: sql<number>`count(*)` }).from(deploymentEvents).where(eq(deploymentEvents.eventType, 'update_error')).get()?.count || 0;
+
+        const metrics = [
+            `# HELP expo_releases_total Total number of releases`,
+            `# TYPE expo_releases_total gauge`,
+            `expo_releases_total ${totalReleases}`,
+            
+            `# HELP expo_releases_active_total Total number of active releases`,
+            `# TYPE expo_releases_active_total gauge`,
+            `expo_releases_active_total ${activeReleases}`,
+
+            `# HELP expo_downloads_total Total number of manifest downloads`,
+            `# TYPE expo_downloads_total counter`,
+            `expo_downloads_total ${downloadsTotal}`,
+
+            `# HELP expo_errors_total Total number of client update errors`,
+            `# TYPE expo_errors_total counter`,
+            `expo_errors_total ${errorsTotal}`,
+        ].join('\n');
+
+        res.set('Content-Type', 'text/plain');
+        res.send(metrics);
+    } catch (e) {
+        next(e);
+    }
+});
+
+router.get('/verify-assets', async (req, res, next) => {
+    try {
+        const allAssets = db.select().from(assets).all();
+        const results = {
+            total: allAssets.length,
+            missing: [] as string[],
+            corrupted: [] as string[],
+        };
+
+        const assetsBaseDir = path.join(config.paths.dataDir, 'assets');
+
+        for (const asset of allAssets) {
+            const assetPath = path.join(assetsBaseDir, asset.hash);
+            if (!fs.existsSync(assetPath)) {
+                results.missing.push(asset.hash);
+                continue;
+            }
+            
+            // Calculate hash to verify integrity (expensive for large DBs, be careful)
+            // For now, just check existence or maybe size
+            const stats = fs.statSync(assetPath);
+            if (stats.size !== asset.sizeBytes) {
+                results.corrupted.push(asset.hash);
+            }
+        }
+
+        res.json({
+            status: (results.missing.length === 0 && results.corrupted.length === 0) ? 'ok' : 'issues_found',
+            ...results
+        });
+    } catch (e) {
+        next(e);
+    }
+});
+
 export default router;

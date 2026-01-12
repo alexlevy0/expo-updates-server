@@ -4,6 +4,7 @@ import { Release, PaginatedResponse } from '../types';
 import { releases, releaseAssets } from '../db/schema';
 import { eq, and, desc, sql, count } from 'drizzle-orm';
 import crypto from 'crypto';
+import { sendWebhook } from '../services/webhook';
 
 const router = express.Router();
 
@@ -63,7 +64,7 @@ router.get('/:id', (req, res, next) => {
 });
 
 // Update Status / Actions
-router.post('/:id/:action', (req, res, next) => {
+router.post('/:id/:action', async (req, res, next) => {
     try {
         const { id, action } = req.params;
         const release = db.select().from(releases).where(eq(releases.id, id)).get() as Release | undefined;
@@ -143,6 +144,20 @@ router.post('/:id/:action', (req, res, next) => {
                         isLaunchAsset: asset.isLaunchAsset
                     }).run();
                 }
+            });
+
+            // Trigger Webhook for Rollback
+            await sendWebhook({
+                event: 'release.rollback',
+                release: { 
+                    id: newId, 
+                    rollbackFromId: id,
+                    platform: release.platform, 
+                    channel: release.channel, 
+                    runtimeVersion: release.runtimeVersion,
+                    message: `Rollback to ${id}`
+                },
+                timestamp: new Date().toISOString(),
             });
             
             res.json({ success: true, newReleaseId: newId });

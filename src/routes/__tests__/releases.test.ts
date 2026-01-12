@@ -32,8 +32,8 @@ describe('Releases API', () => {
         
         // Insert two releases
         db.insert(releases).values([
-            { id: id1, runtimeVersion: '1.0', platform: 'ios', channel: 'prod', bundlePath: 'b', manifestJson: '{}', isActive: true },
-            { id: id2, runtimeVersion: '1.0', platform: 'ios', channel: 'prod', bundlePath: 'b', manifestJson: '{}', isActive: false }
+            { id: id1, runtimeVersion: '1.0.0', platform: 'ios', channel: 'production', bundlePath: 'b', manifestJson: '{}', isActive: true },
+            { id: id2, runtimeVersion: '1.0.0', platform: 'ios', channel: 'production', bundlePath: 'b', manifestJson: '{}', isActive: false }
         ]).run();
 
         // Activate id2
@@ -50,7 +50,7 @@ describe('Releases API', () => {
     it('DELETE /api/releases/:id deletes a release', async () => {
         const id = crypto.randomUUID();
         db.insert(releases).values({
-            id, runtimeVersion: '1', platform: 'ios', channel: 'test', bundlePath: 'b', manifestJson: '{}' 
+            id, runtimeVersion: '1.0.0', platform: 'ios', channel: 'production', bundlePath: 'b', manifestJson: '{}' 
         }).run();
 
         const res = await request(app).delete(`/api/releases/${id}`);

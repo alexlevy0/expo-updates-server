@@ -8,7 +8,7 @@ import { db } from '../database';
 import { config } from '../config';
 import { UploadReleaseSchema } from '../types';
 import { hashFile } from '../crypto';
-import { releases, assets, releaseAssets } from '../db/schema';
+import { releases, assets, releaseAssets, channels } from '../db/schema';
 import { sql, eq, and } from 'drizzle-orm';
 import { sendWebhook } from '../services/webhook';
 
@@ -122,7 +122,22 @@ router.post('/upload', upload.single('bundle'), async (req, res, next) => {
             }
         }
 
-        // 2. Create Release
+        // 2. Ensure Channel Exists
+        const existingChannel = db.select().from(channels).where(eq(channels.name, body.channel)).get();
+        if (!existingChannel) {
+            console.log(`Auto-creating channel: ${body.channel}`);
+            try {
+                db.insert(channels).values({
+                    name: body.channel,
+                    // description: 'Auto-created' 
+                }).run();
+            } catch (e) {
+                // Ignore race condition if parallel upload created it
+                console.warn(`Channel creation race condition: ${e}`);
+            }
+        }
+
+        // 3. Create Release
         const releaseId = crypto.randomUUID();
         let manifestJson = '{}'; 
         

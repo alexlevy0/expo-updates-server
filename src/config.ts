@@ -29,6 +29,7 @@ export const config = {
     env: getEnv('NODE_ENV', 'development'),
     baseUrl: getEnv('BASE_URL', 'http://localhost:3000'),
     trustProxy: getEnv('TRUST_PROXY', 'false') === 'true',
+    apiKey: getEnv('API_KEY', ''),
   },
   paths: {
     dataDir: path.resolve(getEnv('DATA_DIR', 'data')),

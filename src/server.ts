@@ -5,7 +5,7 @@ import path from 'path';
 import { config } from './config';
 import { apiLimiter, manifestLimiter, uploadLimiter } from './middleware/rate-limit';
 import { errorHandler } from './middleware/error-handler';
-import { dashboardAuth } from './middleware/auth';
+import { adminAuth } from './middleware/auth';
 import expoRoutes from './routes/expo';
 import releaseRoutes from './routes/releases';
 import channelRoutes from './routes/channels';
@@ -34,44 +34,22 @@ if (config.server.trustProxy) {
 }
 
 // Routes
-app.use('/api/manifest', manifestLimiter); // Apply specific limiter for manifest if handled by expoRoutes with dedicated path, better to mount specific route if possible, but expoRoutes handles it.
-// Actually expoRoutes handles /api/manifest inside. So we should probably apply to the route mount.
-// But expoRoutes is mounted at root `/`. "app.use('/', expoRoutes)"
-// To apply limiter specifically to manifest, we can't easily unless we know the path inside expoRoutes.
-// Typically it is `GET /api/manifest`.
-
-// Let's modify how we mount routes to be more explicit or apply middleware globally with path filter
+// Apply specific limiter for manifest
 app.use('/api/manifest', manifestLimiter);
 
 app.use('/', expoRoutes); 
-app.use('/api/releases', dashboardAuth, releaseRoutes);
-app.use('/api/channels', dashboardAuth, channelRoutes);
-app.use('/api/stats', statsRoutes); // Stats might be public or protected? Usually public or separate auth. Let's keep public or add auth if desired. Request didn't specify stats auth, but typically dashboard uses it.
-// Actually implementation request said "dashboardAuth on routes admin".
-// Stats is used by dashboard, so maybe auth? But user didn't explicitly say stats.
-// "dashboard/index.html" fetches /api/stats. So if dashboard is authed, stats should be too if called from browser with credentials.
-// But Basic Auth header isn't automatically sent by fetch unless configured...
-// Wait, if we put Basic Auth on dashboard HTML, browser handles it.
-// Fetches from that page will inherit credentials? No, fetch needs `credentials: 'include'`?
-// Actually Basic Auth is usually per-request. Browser remembers it for the realm.
-// Let's assume stats can be protected too if dashboard uses it.
-// Checking user request: "Appliquer sur les routes admin : app.use('/api/releases', ...), app.use('/api/channels', ...), app.use('/dashboard', ...)"
-// It didn't mention stats. But I'll leave stats open or assume it's fine.
 
-// Upload
-app.use('/api/releases', dashboardAuth); // Auth for upload too since it's under releases path structure (actually releases.ts handles /api/releases/*, upload handles /api/releases/upload specifically via separate router mount?)
-// In server.ts original:
-// app.use('/api/releases', releaseRoutes);
-// app.use('/api/releases', uploadRoutes);
-
-// So we can do:
+// Admin Routes (Dashboard + Upload + Management) - Protected by API Key or Dashboard Auth
 app.use('/api/releases/upload', uploadLimiter);
-app.use('/api/releases', dashboardAuth, uploadRoutes); // Secure upload
-app.use('/api/releases', dashboardAuth, releaseRoutes); // Secure releases
+app.use('/api/releases', adminAuth, uploadRoutes); 
+app.use('/api/releases', adminAuth, releaseRoutes);
+app.use('/api/channels', adminAuth, channelRoutes);
+
+app.use('/api/stats', statsRoutes);
 
 // Dashboard Static
 const dashboardDir = path.join(__dirname, '../dashboard'); 
-app.use('/dashboard', dashboardAuth, express.static(dashboardDir));
+app.use('/dashboard', adminAuth, express.static(dashboardDir));
 
 // Fallback for SPA routing if we add client-side routing, but it's single index.html
 app.get('/dashboard/*', (req, res) => {
