@@ -37,11 +37,9 @@ COPY --from=builder /app/dist ./dist
 # If we run `bun src/server.ts`, we need node_modules.
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/scripts ./scripts 
-# We copy scripts for init-db usage via docker-compose command.
-
-# Data directories
 RUN mkdir -p /var/lib/expo-updates/data /var/lib/expo-updates/keys \
-    && chown -R bun:bun /var/lib/expo-updates
+    && chown -R bun:bun /var/lib/expo-updates \
+    && chmod +x ./scripts/entrypoint.sh
 
 ENV NODE_ENV=production \
     PORT=3000 \
@@ -55,4 +53,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD wget -qO- http://localhost:3000/health || exit 1
 
-CMD ["bun", "dist/server.js"]
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]

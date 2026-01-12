@@ -15,6 +15,13 @@
       "when": 1768238667224,
       "tag": "0001_elite_sister_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1768244232174,
+      "tag": "0002_empty_black_widow",
+      "breakpoints": true
     }
   ]
 }

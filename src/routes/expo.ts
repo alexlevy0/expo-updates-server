@@ -1,5 +1,5 @@
 import express from 'express';
-import path from 'path';
+import path from 'node:path';
 import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../database';
 import { releases, assets, deploymentEvents } from '../db/schema';
@@ -66,9 +66,8 @@ router.get('/api/manifest', (req, res, next) => {
     res.setHeader('expo-sfv-version', '0');
     res.setHeader('expo-signature', `sig="${signature}", keyid="main", alg="rsa-v1_5-sha256"`);
     // Headers cannot contain newlines, so we must sanitize the PEM or use a specific encoding.
-    // Expo protocol likely expects the PEM content without newlines, or properly encoded.
-    // We will strip newlines to satisfy Node's http validation.
-    res.setHeader('expo-certificate-chain', cert.replace(/[\r\n]+/g, ' ')); 
+    // Expo protocol expects the PEM content without newlines (whitespace separated is fine for some parsers, but single line is safest for HTTP headers).
+    res.setHeader('expo-certificate-chain', cert.replace(/[\r\n]+/g, ' ').trim()); 
     
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'private, max-age=0');
@@ -99,6 +98,13 @@ router.get('/api/manifest', (req, res, next) => {
 router.get('/assets/:hash', (req, res, next) => {
     try {
         const hash = req.params.hash;
+        
+        // Prevent Directory Traversal
+        if (!/^[a-zA-Z0-9]+$/.test(hash)) {
+            res.status(400).json({ error: 'Invalid asset hash' });
+            return;
+        }
+
         const asset = db.select().from(assets).where(eq(assets.hash, hash)).get();
 
         if (!asset) {
