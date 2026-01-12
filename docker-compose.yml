@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  expo-updates:
+    build: .
+    image: expo-updates-server:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - expo_data:/var/lib/expo-updates/data
+      - expo_keys:/var/lib/expo-updates/keys
+    environment:
+      - NODE_ENV=production
+      - BASE_URL=http://localhost:3000
+      # Security
+      - RATE_LIMIT_WINDOW_MS=60000
+      - RATE_LIMIT_MAX_REQUESTS=500
+      - DASHBOARD_AUTH_ENABLED=false
+    # Setup: Initialize DB and Keys on start if needed?
+    # Usually better to have entrypoint script.
+    # But since we use SQLite and keys on disk, the app logic should handle it or we run init command.
+    # Our scripts/init-db.ts and scripts/generate-keys.ts are usually manual.
+    # However, for a one-click deploy, we might want them to auto-run if missing.
+    # The Dockerfile CMD is `node dist/server.js`.
+    # Server doesn't auto-init DB schema (database.ts just connects).
+    # We should override CMD or suggest running init once.
+    # OR, we can update server.ts/database.ts to sync schema on boot?
+    # Prompt says: `scripts/init-db.ts` exists.
+    # Let's use a command that attempts init then starts.
+    command: >
+      sh -c "bun dist/scripts/init-db.js && 
+             if [ ! -f /var/lib/expo-updates/keys/private-key.pem ]; then bun dist/scripts/generate-keys.js; fi && 
+             bun dist/server.js"
+
+volumes:
+  expo_data:
+  expo_keys:
